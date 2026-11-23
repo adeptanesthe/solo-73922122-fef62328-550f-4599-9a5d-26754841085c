@@ -60,6 +60,78 @@ async function loadExamples() {
     };
     box.appendChild(btn);
   });
+
+  // 规则转换示例
+  const cbox = $("conv-examples");
+  cbox.innerHTML = "";
+  data.conversion_examples.forEach((ex) => {
+    const btn = document.createElement("button");
+    btn.textContent = ex.title;
+    btn.title = ex.description || "";
+    btn.onclick = () => loadConversionExample(ex);
+    cbox.appendChild(btn);
+  });
+}
+
+function fillCondition(condition) {
+  $("c-temp").value = JSON.stringify(condition.temperature);
+  $("c-front").value = JSON.stringify(condition.front);
+  $("c-back").value = JSON.stringify(condition.back);
+  $("c-diff").value = JSON.stringify(condition.diff);
+}
+
+async function waitForTrial(jobId) {
+  for (let i = 0; i < 100; i += 1) {
+    const data = await api(`/api/trials/${jobId}`);
+    if (!["pending", "running"].includes(data.job.status)) {
+      return data.job;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error("试算任务超时未完成");
+}
+
+// 转换示例：冲突示例需要先自动走一遍 保存→试算→确认，使确认方案生效。
+async function loadConversionExample(ex) {
+  try {
+    $("btn-convert").disabled = true;
+    showMsg($("conv-msg"), `正在准备「${ex.title}」…`, true);
+    $("original-tree").value = JSON.stringify(ex.original_tree, null, 2);
+    await api("/api/original-tree", {
+      method: "POST",
+      body: JSON.stringify({ tree: ex.original_tree }),
+    });
+
+    if (ex.needs_confirmation) {
+      $("candidate-tree").value = JSON.stringify(ex.candidate_tree, null, 2);
+      const draft = ex.draft;
+      $("d-temp").value = JSON.stringify(draft.temperature);
+      $("d-front").value = JSON.stringify(draft.front);
+      $("d-back").value = JSON.stringify(draft.back);
+      $("d-diff").value = JSON.stringify(draft.diff);
+      await api("/api/draft", {
+        method: "POST",
+        body: JSON.stringify({ candidate_tree: ex.candidate_tree, draft }),
+      });
+      const trial = await api("/api/trials", { method: "POST" });
+      const job = await waitForTrial(trial.job_id);
+      if (job.status !== "solved") {
+        throw new Error(`示例试算未成功（${job.status}）：${job.result?.reason ?? job.error ?? ""}`);
+      }
+      await api("/api/confirmations", {
+        method: "POST",
+        body: JSON.stringify({ trial_id: job.id }),
+      });
+    }
+
+    fillCondition(ex.condition);
+    showMsg($("conv-msg"), `已载入「${ex.title}」，点击“开始转换”查看结果`, true);
+    await refreshState();
+  } catch (err) {
+    showMsg($("conv-msg"), err.message, false);
+  } finally {
+    $("btn-convert").disabled = false;
+  }
 }
 
 // ---------- 保存原树 ----------
@@ -245,6 +317,92 @@ async function refreshState() {
   renderConfirmation(state);
   await renderJobs();
 }
+
+// ---------- 备用控制器规则转换 ----------
+let lastConversion = null;
+
+function readCondition() {
+  return {
+    temperature: parseInterval($("c-temp").value, "温度区间"),
+    front: parseInterval($("c-front").value, "前压区间"),
+    back: parseInterval($("c-back").value, "后压区间"),
+    diff: parseInterval($("c-diff").value, "压差区间"),
+  };
+}
+
+function renderConversion(data) {
+  const ok = data.download_allowed;
+  showMsg($("conv-msg"), data.reason, ok);
+  const summary = {
+    转换状态: { solved: "成功（可下载）", conflict: "存在冲突（已禁用下载）", no_solution: "工况无解" }[data.status] || data.status,
+    生效分流: data.routing_basis === "candidate_confirmation" ? "已确认方案（获准读数走候选树，其余走原树）" : "原树（无确认方案）",
+    工况: data.condition,
+    规则条数: data.rule_count,
+    冲突组数: data.conflict_count,
+    统计: data.stats,
+  };
+  let detail = "";
+  if (ok) {
+    detail = "\n\n规则列表（每条：类别 + 温度/前压码/后压码/码差 四个闭区间）：\n"
+      + JSON.stringify(data.rules, null, 2);
+  } else if (data.status === "conflict") {
+    detail = "\n\n冲突明细（同温度、同前后压力码但类别不同的两组真值）：\n"
+      + JSON.stringify(data.conflicts, null, 2);
+  }
+  $("conv-result").textContent = JSON.stringify(summary, null, 2) + detail;
+
+  const dl = $("btn-download");
+  dl.disabled = !ok;
+  if (ok) {
+    lastConversion = data;
+  } else {
+    lastConversion = null;
+  }
+}
+
+$("btn-convert").onclick = async () => {
+  try {
+    const condition = readCondition();
+    $("btn-convert").disabled = true;
+    const data = await api("/api/rule-conversions", {
+      method: "POST",
+      body: JSON.stringify(condition),
+    });
+    renderConversion(data);
+  } catch (err) {
+    showMsg($("conv-msg"), "转换失败：" + err.message, false);
+    $("btn-download").disabled = true;
+    lastConversion = null;
+  } finally {
+    $("btn-convert").disabled = false;
+  }
+};
+
+$("btn-download").onclick = () => {
+  if (!lastConversion || !lastConversion.download_allowed) return;
+  const payload = {
+    generated_by: "封口线备用控制器规则转换",
+    routing_basis: lastConversion.routing_basis,
+    condition: lastConversion.condition,
+    rule_count: lastConversion.rule_count,
+    rules: lastConversion.rules.map((r) => ({
+      category: r.category,
+      temperature: r.temperature,
+      front_code: r.front_code,
+      back_code: r.back_code,
+      code_diff: r.code_diff,
+    })),
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "backup-controller-rules.json";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
 
 loadExamples().catch((err) => showMsg($("draft-msg"), err.message, false));
 refreshState().catch((err) => showMsg($("draft-msg"), err.message, false));

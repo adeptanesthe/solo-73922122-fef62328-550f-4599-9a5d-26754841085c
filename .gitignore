@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+.pydeps/
+data/state.json
+data/*.tmp

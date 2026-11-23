@@ -6,7 +6,8 @@ import threading
 
 from flask import Flask, jsonify, render_template, request
 
-from .examples import EXAMPLES
+from .converter import convert_rules
+from .examples import CONVERSION_EXAMPLES, EXAMPLES
 from .solver import run_trial
 from .store import Store
 from .tree import classify, validate_tree_full
@@ -40,7 +41,8 @@ def create_app(data_file=None):
 
     @app.get("/api/examples")
     def get_examples():
-        return jsonify({"ok": True, "examples": EXAMPLES})
+        return jsonify({"ok": True, "examples": EXAMPLES,
+                        "conversion_examples": CONVERSION_EXAMPLES})
 
     # ---------------- 原树 ----------------
     @app.post("/api/original-tree")
@@ -225,6 +227,47 @@ def create_app(data_file=None):
             "reason": reason,
             "confirmation_zone": confirmation["zone"] if confirmation else None,
         })
+
+    # ---------------- 备用控制器规则转换 ----------------
+    @app.post("/api/rule-conversions")
+    def convert_backup_rules():
+        """按转换开始时生效的分流，把工况四闭区间转换为备用控制器规则。
+
+        同步执行（区间算法毫秒级）；冲突/无解时 download_allowed=False 并说明原因，
+        规则 JSON 只在无冲突且存在合规真值时返回，由前端落盘下载。
+        """
+        state = store.get_state()
+        if state["original_tree"] is None:
+            return error("尚未录入原树，无法进行规则转换", 409)
+        payload = request.get_json(silent=True)
+        try:
+            condition = validate_draft(payload)
+        except ValueError as exc:
+            return error(f"转换工况校验失败：{exc}")
+
+        # 转换开始时刻生效分流的快照：原树 + 当前确认方案（若有）。
+        snapshot_state = store.get_state()
+        original_tree = json.loads(json.dumps(snapshot_state["original_tree"]))
+        confirmation = snapshot_state["confirmation"]
+        if confirmation is not None:
+            confirmation = json.loads(json.dumps(confirmation))
+
+        output = convert_rules(original_tree, confirmation, condition)
+        body = {
+            "ok": True,
+            "download_allowed": output["download_allowed"],
+            "status": output["status"],
+            "reason": output["reason"],
+            "routing_basis": output["routing_basis"],
+            "condition": output["condition"],
+            "rules": output["rules"],
+            "rule_count": output["rule_count"],
+            "conflicts": output["conflicts"],
+            "conflict_count": output["conflict_count"],
+            "stats": output["stats"],
+        }
+        # 冲突/无解不是 HTTP 错误：前端仍需展示明细与原因，仅禁用下载。
+        return jsonify(body)
 
     return app
 

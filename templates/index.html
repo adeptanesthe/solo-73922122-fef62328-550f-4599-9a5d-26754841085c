@@ -85,10 +85,45 @@
     </div>
     <pre id="classify-result" class="result"></pre>
   </section>
+
+  <section class="card" id="conversion-card">
+    <h2>⑦ 备用控制器规则转换</h2>
+    <p class="hint">
+      备用控制器读取完整温度；前压、后压只取原读数的<strong>高 8 位</strong>作为压力码
+      （码 c 覆盖原值 [256c, 256c+255]）。填写温度、前压、后压、实际压差四个整数闭区间，
+      按<strong>开始转换时生效的分流</strong>（有确认方案且读数获准走候选树，否则走原树）给合规真值分类。
+      每条规则含类别与四个闭区间：温度、前压码、后压码、后压码减前压码，四项同时在区间内才命中。
+    </p>
+    <div id="conv-examples" class="examples"></div>
+    <div class="grid4">
+      <label>温度区间 [下限, 上限]
+        <input id="c-temp" value="[4000, 6000]" />
+      </label>
+      <label>前压原值区间 [下限, 上限]
+        <input id="c-front" value="[512, 1023]" />
+      </label>
+      <label>后压原值区间 [下限, 上限]
+        <input id="c-back" value="[256, 4095]" />
+      </label>
+      <label>实际压差区间 [下限, 上限]
+        <input id="c-diff" value="[-1000, 2000]" />
+      </label>
+    </div>
+    <p class="hint">
+      三项读数为 0..65535 的整数闭区间，压差为后压减前压（-65535..65535）。
+      转换为纯区间计算，不枚举真值或压力码组合。
+    </p>
+    <div class="row">
+      <button id="btn-convert" class="primary">开始转换</button>
+      <button id="btn-download" disabled>下载 JSON 规则</button>
+      <span id="conv-msg" class="msg"></span>
+    </div>
+    <pre id="conv-result" class="result"></pre>
+  </section>
 </main>
 
 <footer>
-  <p>求解说明：叶子盒子区间运算 + 压差闭式判据 + 温度轴区间合并，不枚举任何读数组合。</p>
+  <p>求解说明：叶子盒子区间运算 + 压差闭式判据 + 温度轴区间合并，不枚举任何读数组合；规则转换同样只做码块区间运算。</p>
 </footer>
 
 <script src="{{ url_for('static', filename='app.js') }}"></script>
