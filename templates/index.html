@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>封口线候选决策树接管试算</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+</head>
+<body>
+<header>
+  <h1>封口线候选决策树接管试算平台</h1>
+  <p class="subtitle">
+    录入原树与候选树（JSON，每棵至多 128 个叶子），保存工况草稿并试算最长安全温区；
+    确认后仅温区内且符合获准工况的读数由候选树分流，其余仍走原树。
+  </p>
+  <div class="revision-bar">
+    <span>当前草稿版本号 revision：<strong id="revision">–</strong></span>
+    <span id="confirm-badge" class="badge hidden">已有确认方案</span>
+  </div>
+</header>
+
+<main>
+  <section class="card" id="examples-card">
+    <h2>① 示例（可直接载入试算）</h2>
+    <div id="examples" class="examples"></div>
+  </section>
+
+  <section class="card">
+    <h2>② 原树录入</h2>
+    <p class="hint">叶子：<code>{"leaf": "类别"}</code>；分支：
+      <code>{"feature":"temperature|front|back","threshold":整数,"left":…,"right":…}</code>，
+      读数 ≤ 阈值走 left，否则走 right。</p>
+    <textarea id="original-tree" rows="10" spellcheck="false"></textarea>
+    <div class="row">
+      <button id="btn-save-original">保存原树</button>
+      <span id="original-msg" class="msg"></span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>③ 候选树与工况草稿</h2>
+    <textarea id="candidate-tree" rows="10" spellcheck="false"></textarea>
+    <div class="grid4">
+      <label>温度区间 [下限, 上限]
+        <input id="d-temp" value="[150, 300]" />
+      </label>
+      <label>前压区间 [下限, 上限]
+        <input id="d-front" value="[100, 200]" />
+      </label>
+      <label>后压区间 [下限, 上限]
+        <input id="d-back" value="[150, 500]" />
+      </label>
+      <label>后压−前压区间 [下限, 上限]
+        <input id="d-diff" value="[0, 300]" />
+      </label>
+    </div>
+    <p class="hint">三项读数均为 0..65535 的整数闭区间；压差为后压减前压的整数闭区间（-65535..65535）。</p>
+    <div class="row">
+      <button id="btn-save-draft">保存候选树与工况草稿</button>
+      <button id="btn-trial" class="primary">发起试算</button>
+      <span id="draft-msg" class="msg"></span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>④ 试算任务与确认</h2>
+    <p class="hint">试算在后台运行，期间仍可继续保存草稿；每个任务绑定发起时的草稿版本，草稿一经修改（含改回原值）旧试算即过期，确认会被拒绝。</p>
+    <div id="jobs"></div>
+  </section>
+
+  <section class="card">
+    <h2>⑤ 当前确认方案</h2>
+    <div id="confirmation" class="confirmation">尚无确认方案，当前所有读数均由原树分流。</div>
+  </section>
+
+  <section class="card">
+    <h2>⑥ 读数分流查询</h2>
+    <div class="grid3">
+      <label>温度 <input id="r-temp" type="number" min="0" max="65535" value="180" /></label>
+      <label>前压 <input id="r-front" type="number" min="0" max="65535" value="150" /></label>
+      <label>后压 <input id="r-back" type="number" min="0" max="65535" value="300" /></label>
+    </div>
+    <div class="row">
+      <button id="btn-classify" class="primary">查询所用树与分类</button>
+    </div>
+    <pre id="classify-result" class="result"></pre>
+  </section>
+</main>
+
+<footer>
+  <p>求解说明：叶子盒子区间运算 + 压差闭式判据 + 温度轴区间合并，不枚举任何读数组合。</p>
+</footer>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
